@@ -310,3 +310,33 @@ How should request correlation and error responses be standardized across API an
 - **RFC-7807-Inspired Error Model**: A centralized `GlobalExceptionHandler` converts all validation errors, malformed payloads, invalid enum values, and broker failures into a consistent `ErrorResponse` containing `timestamp`, `status`, `error`, `message`, `path`, and `requestId`.
 - **Zero Stack Trace Leaks**: Internal exception stack traces and sensitive payload metadata are logged to server logs only and never exposed to API callers.
 
+---
+
+## ADR-011: Kafka Consumer Persistence, Record Acknowledgment, and Dead-Letter Queue (M3)
+
+**Date**: 2026-10-10  
+**Status**: Accepted
+
+### Problem
+How should activity events consumed from `user.activity.events` be persisted into PostgreSQL reliably, preventing data loss, infinite consumer loops, duplicate records, and out-of-order commits?
+
+### Options Considered
+1. **Auto-commit offsets (`enable.auto.commit=true`)**: Simple, but introduces data loss if the consumer crashes after committing offsets but before persisting to PostgreSQL.
+2. **Batch commits**: Commits offsets after a batch of records. Increases throughput, but complicates duplicate tracking and partial failure rollback.
+3. **Record-level acknowledgment (`AckMode.RECORD`) with transactional persistence and DLQ**: Commits the Kafka offset strictly after the individual record's database transaction commits successfully.
+
+### Decision
+Record-level acknowledgment (`AckMode.RECORD`) combined with an idempotent `@Transactional` persistence service, `ErrorHandlingDeserializer`, bounded backoff retries, and dead-letter routing to `user.activity.dlq`.
+
+### Key Mechanics
+1. **Offset Commit After DB Commit**: The listener container only commits the offset of a record after `ActivityEventPersistenceService.persist(event)` successfully commits to PostgreSQL.
+2. **Idempotency Guard**:
+   - Application-level check: `activityEventRepository.existsByEventId(event.eventId())`. If true, the event is logged and skipped.
+   - Database-level fallback: The unique constraint `uq_activity_events_event_id` catches concurrent race conditions via `DataIntegrityViolationException`, which is caught and handled idempotently without throwing.
+3. **Safe Deserialization & Poison Pill Isolation**: `ErrorHandlingDeserializer` catches malformed payloads and passes the error to `DefaultErrorHandler`. Deserialization errors are marked non-retryable and routed directly to `user.activity.dlq` using `DeadLetterPublishingRecoverer`, preventing toxic poison pills from halting partition consumption.
+4. **Transient Database Outage Handling**: Database connection failures trigger bounded retries (configured via `FixedBackOff` with 2 retries). If retries exhaust, the record is published to DLQ and the offset is advanced, preventing partition blockage while preserving diagnostic context.
+
+### Delivery Semantic
+At-least-once delivery with idempotent persistence. Not Kafka transactional exactly-once, but guarantees no message loss and no duplicate database rows.
+
+

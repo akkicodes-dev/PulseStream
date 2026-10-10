@@ -31,8 +31,8 @@ PulseStream solves:
 | Feature | Milestone | Status |
 |---------|-----------|--------|
 | Project foundation, Docker Compose | M1 | ✅ Complete |
-| Event ingestion API (`POST /api/v1/events`) | M2 | 🔲 Planned |
-| Kafka producer + consumer + idempotency | M3 | 🔲 Planned |
+| Event ingestion API (`POST /api/v1/events`) | M2 | ✅ Complete |
+| Kafka producer + consumer + idempotency | M3 | ✅ Complete |
 | Kafka Streams session aggregation | M4 | 🔲 Planned |
 | Elasticsearch analytics + query API | M5 | 🔲 Planned |
 | Observability (structured logging, metrics) | M6 | 🔲 Planned |

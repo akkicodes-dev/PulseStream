@@ -25,8 +25,11 @@ import org.springframework.test.context.TestPropertySource;
         "spring.kafka.streams.bootstrap-servers=localhost:9999",
         // Prevent Flyway from running during context-only tests
         // (full DB tests use Testcontainers)
+        "spring.datasource.url=jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5433}/${POSTGRES_DB:pulsestream}",
         "spring.flyway.enabled=false",
         "spring.jpa.hibernate.ddl-auto=none",
+        // Prevent Kafka consumer from connecting during context smoke test
+        "pulsestream.kafka.consumer.auto-startup=false",
         // Prevent Redis from failing
         "spring.data.redis.host=localhost",
         "spring.data.redis.port=6380",
