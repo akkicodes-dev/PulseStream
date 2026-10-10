@@ -245,7 +245,16 @@ See [docs/ARCHITECTURE_DECISIONS.md](docs/ARCHITECTURE_DECISIONS.md) for detaile
 
 ## Load Testing
 
-_(Milestone 8 — results will be added after JMeter test runs)_
+Milestone 8 load testing and performance benchmarks executed with Apache JMeter 5.6.3.  
+See [docs/MILESTONE_8_VERIFICATION.md](docs/MILESTONE_8_VERIFICATION.md) for full metrics, throughput percentiles, and test plans.
+
+---
+
+## Production Readiness & E2E Verification
+
+Milestone 9 end-to-end verification, security audit, and reliability validation.  
+- Automated E2E test runner: [tests/e2e_verification.ps1](tests/e2e_verification.ps1)
+- Comprehensive verification report: [docs/MILESTONE_9_VERIFICATION.md](docs/MILESTONE_9_VERIFICATION.md)
 
 ---
 
