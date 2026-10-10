@@ -51,6 +51,7 @@ docker-compose.override.yml
 # ─── Test output ──────────────────────────────────────────────────────────────
 surefire-reports/
 failsafe-reports/
+tests/performance/results/
 
 # ─── Build artifacts ──────────────────────────────────────────────────────────
 HELP.md
