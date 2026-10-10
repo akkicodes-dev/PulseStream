@@ -15,6 +15,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.sql.Timestamp;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.Collections;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -67,6 +68,28 @@ class AnalyticsServiceTest {
     }
 
     @Test
+    @DisplayName("Should handle empty dataset gracefully in overview metrics")
+    void shouldHandleEmptyDatasetGracefully() {
+        OffsetDateTime from = OffsetDateTime.parse("2026-10-10T00:00:00Z");
+        OffsetDateTime to = OffsetDateTime.parse("2026-10-10T12:00:00Z");
+
+        when(activityEventRepository.countByEventTimestampBetween(from, to)).thenReturn(0L);
+        when(activityEventRepository.countDistinctUserIdByEventTimestampBetween(from, to)).thenReturn(0L);
+        when(userSessionRepository.countByIsActiveTrueAndLastSeenAtAfter(any(OffsetDateTime.class))).thenReturn(0L);
+        when(activityEventRepository.countByEventTypeBetween(from, to)).thenReturn(Collections.emptyList());
+        when(activityEventRepository.countBySourceBetween(from, to)).thenReturn(Collections.emptyList());
+
+        AnalyticsOverviewResponse response = analyticsService.getOverview(from, to);
+
+        assertThat(response).isNotNull();
+        assertThat(response.totalEvents()).isZero();
+        assertThat(response.uniqueUsers()).isZero();
+        assertThat(response.activeSessions()).isZero();
+        assertThat(response.eventsByType()).isEmpty();
+        assertThat(response.eventsBySource()).isEmpty();
+    }
+
+    @Test
     @DisplayName("Should throw IllegalArgumentException when from is after to")
     void shouldThrowWhenFromIsAfterTo() {
         OffsetDateTime from = OffsetDateTime.parse("2026-10-10T12:00:00Z");
@@ -75,6 +98,23 @@ class AnalyticsServiceTest {
         assertThatThrownBy(() -> analyticsService.getOverview(from, to))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("'from' timestamp cannot be after 'to' timestamp");
+    }
+
+    @Test
+    @DisplayName("Should handle boundary condition when from equals to (single point in time)")
+    void shouldHandleBoundaryConditionWhenFromEqualsTo() {
+        OffsetDateTime pointInTime = OffsetDateTime.parse("2026-10-10T12:00:00Z");
+
+        when(activityEventRepository.aggregateTimeSeriesMinute(pointInTime, pointInTime))
+                .thenReturn(Collections.emptyList());
+
+        TimeSeriesResponse response = analyticsService.getTimeSeries("MINUTE", pointInTime, pointInTime);
+
+        assertThat(response).isNotNull();
+        assertThat(response.bucketCount()).isEqualTo(1);
+        assertThat(response.buckets()).hasSize(1);
+        assertThat(response.buckets().get(0).timestamp()).isEqualTo(pointInTime);
+        assertThat(response.buckets().get(0).totalEvents()).isZero();
     }
 
     @Test
@@ -186,5 +226,27 @@ class AnalyticsServiceTest {
         assertThat(response.firstSeenAt()).isEqualTo(OffsetDateTime.parse("2026-10-01T08:00:00Z"));
         assertThat(response.lastSeenAt()).isEqualTo(OffsetDateTime.parse("2026-10-10T11:30:00Z"));
         assertThat(response.eventsByType()).containsEntry("PAGE_VIEW", 60L).containsEntry("PURCHASE", 25L);
+    }
+
+    @Test
+    @DisplayName("Should handle user with no prior activity gracefully")
+    void shouldHandleUserWithNoPriorActivityGracefully() {
+        String userId = "usr-empty";
+
+        when(userSessionRepository.countByUserId(userId)).thenReturn(0L);
+        when(userSessionRepository.countByUserIdAndIsActiveTrue(userId)).thenReturn(0L);
+        when(activityEventRepository.findUserSummary(userId)).thenReturn(Collections.emptyList());
+        when(activityEventRepository.countByEventTypeForUser(userId)).thenReturn(Collections.emptyList());
+
+        UserAnalyticsResponse response = analyticsService.getUserAnalytics(userId);
+
+        assertThat(response).isNotNull();
+        assertThat(response.userId()).isEqualTo(userId);
+        assertThat(response.totalEvents()).isZero();
+        assertThat(response.totalSessions()).isZero();
+        assertThat(response.activeSessions()).isZero();
+        assertThat(response.firstSeenAt()).isNull();
+        assertThat(response.lastSeenAt()).isNull();
+        assertThat(response.eventsByType()).isEmpty();
     }
 }

@@ -34,8 +34,8 @@ PulseStream solves:
 | Event ingestion API (`POST /api/v1/events`) | M2 | ✅ Complete |
 | Kafka producer + consumer + idempotency | M3 | ✅ Complete |
 | Real-time analytics + session aggregation | M4 | ✅ Complete |
-| Elasticsearch analytics + query API | M5 | 🔲 Planned |
-| Observability (structured logging, metrics) | M6 | 🔲 Planned |
+| Advanced analytics optimization & query correctness | M5 | ✅ Complete |
+| Caching & search architecture assessment | M6 | 🔲 Planned |
 | Full test suite + documentation | M7 | 🔲 Planned |
 | Load testing with JMeter + results | M8 | 🔲 Planned |
 
@@ -205,11 +205,12 @@ Key variables:
 
 ## Database Schema
 
-Four migrations managed by Flyway:
+Five migrations managed by Flyway:
 - `V1__create_users_table.sql`: Lightweight user reference.
 - `V2__create_activity_events_table.sql`: Canonical event record (UNIQUE on `event_id`, JSONB metadata, check constraints).
 - `V3__create_user_sessions_table.sql`: Aggregated session state (UNIQUE on `session_id`, `event_count`, `last_seen_at`, `ended_at`).
 - `V4__add_analytics_indexes.sql`: Compound time-series indexes (`idx_ae_ts_type`, `idx_ae_ts_source`) and active session partial index (`idx_us_active_last_seen`).
+- `V5__optimize_analytics_indexes.sql`: Index-only scan optimization (`idx_ae_ts_user`) and user activity index (`idx_ae_user_ts`).
 
 ---
 

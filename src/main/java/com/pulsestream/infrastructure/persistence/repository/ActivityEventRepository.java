@@ -60,7 +60,7 @@ public interface ActivityEventRepository extends JpaRepository<ActivityEventEnti
     List<Object[]> findUserSummary(@Param("userId") String userId);
 
     // Static parameterized queries for time-series aggregation without dynamic SQL concatenation
-    @Query(value = "SELECT date_trunc('minute', event_timestamp AT TIME ZONE 'UTC') AS bucket, " +
+    @Query(value = "SELECT (date_trunc('minute', event_timestamp AT TIME ZONE 'UTC') AT TIME ZONE 'UTC') AS bucket, " +
                    "COUNT(*) AS total_events, COUNT(DISTINCT user_id) AS unique_users " +
                    "FROM activity_events " +
                    "WHERE event_timestamp >= :from AND event_timestamp <= :to " +
@@ -69,7 +69,7 @@ public interface ActivityEventRepository extends JpaRepository<ActivityEventEnti
             @Param("from") OffsetDateTime from,
             @Param("to") OffsetDateTime to);
 
-    @Query(value = "SELECT date_trunc('hour', event_timestamp AT TIME ZONE 'UTC') AS bucket, " +
+    @Query(value = "SELECT (date_trunc('hour', event_timestamp AT TIME ZONE 'UTC') AT TIME ZONE 'UTC') AS bucket, " +
                    "COUNT(*) AS total_events, COUNT(DISTINCT user_id) AS unique_users " +
                    "FROM activity_events " +
                    "WHERE event_timestamp >= :from AND event_timestamp <= :to " +
@@ -78,7 +78,7 @@ public interface ActivityEventRepository extends JpaRepository<ActivityEventEnti
             @Param("from") OffsetDateTime from,
             @Param("to") OffsetDateTime to);
 
-    @Query(value = "SELECT date_trunc('day', event_timestamp AT TIME ZONE 'UTC') AS bucket, " +
+    @Query(value = "SELECT (date_trunc('day', event_timestamp AT TIME ZONE 'UTC') AT TIME ZONE 'UTC') AS bucket, " +
                    "COUNT(*) AS total_events, COUNT(DISTINCT user_id) AS unique_users " +
                    "FROM activity_events " +
                    "WHERE event_timestamp >= :from AND event_timestamp <= :to " +
