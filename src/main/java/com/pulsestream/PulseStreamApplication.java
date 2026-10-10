@@ -3,6 +3,8 @@ package com.pulsestream;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
+import org.springframework.scheduling.annotation.EnableScheduling;
+
 /**
  * PulseStream — Real-Time User Activity & Analytics Platform.
  *
@@ -14,6 +16,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * technology and design choice.
  */
 @SpringBootApplication
+@EnableScheduling
 public class PulseStreamApplication {
 
     public static void main(String[] args) {

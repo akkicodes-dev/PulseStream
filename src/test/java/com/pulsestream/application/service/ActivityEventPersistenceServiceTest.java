@@ -1,5 +1,6 @@
 package com.pulsestream.application.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pulsestream.domain.event.ActivityEvent;
 import com.pulsestream.domain.event.EventSource;
 import com.pulsestream.domain.event.EventType;
@@ -9,29 +10,37 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.QueryTimeoutException;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.time.Instant;
-import java.time.ZoneOffset;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class ActivityEventPersistenceServiceTest {
 
     @Mock
+    private JdbcTemplate jdbcTemplate;
+
+    @Spy
+    private ObjectMapper objectMapper = new ObjectMapper();
+
+    @Mock
     private ActivityEventRepository activityEventRepository;
+
+    @Mock
+    private UserSessionAggregationService userSessionAggregationService;
 
     @InjectMocks
     private ActivityEventPersistenceService persistenceService;
@@ -52,87 +61,72 @@ class ActivityEventPersistenceServiceTest {
     }
 
     @Test
-    @DisplayName("Should persist new activity event into PostgreSQL repository")
-    void shouldPersistNewEventSuccessfully() {
-        when(activityEventRepository.existsByEventId("evt-12345")).thenReturn(false);
+    @DisplayName("Should insert new event and trigger session aggregation when insert succeeds (affectedRows = 1)")
+    void shouldPersistNewEventAndTriggerSessionAggregation() {
+        when(jdbcTemplate.update(anyString(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(1);
 
         ActivityEventEntity savedEntity = new ActivityEventEntity();
         savedEntity.setId(UUID.randomUUID());
         savedEntity.setEventId(sampleEvent.eventId());
         savedEntity.setUserId(sampleEvent.userId());
-        savedEntity.setSessionId(sampleEvent.sessionId());
-        savedEntity.setEventType(sampleEvent.eventType());
-        savedEntity.setEventTimestamp(sampleEvent.timestamp().atOffset(ZoneOffset.UTC));
-        savedEntity.setSource(sampleEvent.source());
-        savedEntity.setMetadata(sampleEvent.metadata());
-        savedEntity.setProcessed(false);
-
-        when(activityEventRepository.save(any(ActivityEventEntity.class))).thenReturn(savedEntity);
+        when(activityEventRepository.findByEventId("evt-12345")).thenReturn(Optional.of(savedEntity));
 
         ActivityEventEntity result = persistenceService.persist(sampleEvent);
 
         assertThat(result).isNotNull();
         assertThat(result.getEventId()).isEqualTo("evt-12345");
-        assertThat(result.getUserId()).isEqualTo("usr-987");
-        assertThat(result.isProcessed()).isFalse();
-
-        ArgumentCaptor<ActivityEventEntity> captor = ArgumentCaptor.forClass(ActivityEventEntity.class);
-        verify(activityEventRepository).save(captor.capture());
-        ActivityEventEntity captured = captor.getValue();
-        assertThat(captured.getEventId()).isEqualTo("evt-12345");
-        assertThat(captured.getUserId()).isEqualTo("usr-987");
-        assertThat(captured.getEventType()).isEqualTo(EventType.PAGE_VIEW);
-        assertThat(captured.getSource()).isEqualTo(EventSource.WEB);
+        verify(userSessionAggregationService, times(1)).recordEventInSession(sampleEvent);
+        verify(activityEventRepository, times(1)).findByEventId("evt-12345");
     }
 
     @Test
-    @DisplayName("Should detect duplicate eventId via existsByEventId and return existing entity without calling save")
-    void shouldHandleDuplicateEventIdIdempotently() {
-        when(activityEventRepository.existsByEventId("evt-12345")).thenReturn(true);
+    @DisplayName("Should handle duplicate event safely via ON CONFLICT without running session aggregation (affectedRows = 0)")
+    void shouldHandleDuplicateEventWithoutTriggeringSessionAggregation() {
+        // Affected rows = 0 indicates PostgreSQL ON CONFLICT DO NOTHING resolved a duplicate event_id
+        when(jdbcTemplate.update(anyString(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(0);
 
-        ActivityEventEntity existing = new ActivityEventEntity();
-        existing.setId(UUID.randomUUID());
-        existing.setEventId("evt-12345");
-        existing.setUserId("usr-987");
-
-        when(activityEventRepository.findByEventId("evt-12345")).thenReturn(Optional.of(existing));
+        ActivityEventEntity existingEntity = new ActivityEventEntity();
+        existingEntity.setId(UUID.randomUUID());
+        existingEntity.setEventId(sampleEvent.eventId());
+        when(activityEventRepository.findByEventId("evt-12345")).thenReturn(Optional.of(existingEntity));
 
         ActivityEventEntity result = persistenceService.persist(sampleEvent);
 
         assertThat(result).isNotNull();
         assertThat(result.getEventId()).isEqualTo("evt-12345");
-        verify(activityEventRepository, never()).save(any(ActivityEventEntity.class));
+        // Critical safeguard: session aggregation must NEVER run for duplicate events
+        verify(userSessionAggregationService, never()).recordEventInSession(any());
+        verify(activityEventRepository, times(1)).findByEventId("evt-12345");
     }
 
     @Test
-    @DisplayName("Should handle concurrent duplicate insert race condition when save throws DataIntegrityViolationException")
-    void shouldHandleDataIntegrityViolationRaceConditionIdempotently() {
-        when(activityEventRepository.existsByEventId("evt-12345")).thenReturn(false);
-        when(activityEventRepository.save(any(ActivityEventEntity.class)))
-                .thenThrow(new DataIntegrityViolationException("duplicate key value violates unique constraint"));
+    @DisplayName("Should propagate exception if session aggregation fails, allowing atomic rollback")
+    void shouldPropagateExceptionIfSessionAggregationFails() {
+        when(jdbcTemplate.update(anyString(), any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(1);
+        doThrow(new IllegalStateException("Session update failed"))
+                .when(userSessionAggregationService).recordEventInSession(sampleEvent);
 
-        ActivityEventEntity existing = new ActivityEventEntity();
-        existing.setId(UUID.randomUUID());
-        existing.setEventId("evt-12345");
-        when(activityEventRepository.findByEventId("evt-12345")).thenReturn(Optional.of(existing));
+        assertThatThrownBy(() -> persistenceService.persist(sampleEvent))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Session update failed");
 
-        ActivityEventEntity result = persistenceService.persist(sampleEvent);
-
-        assertThat(result).isNotNull();
-        assertThat(result.getEventId()).isEqualTo("evt-12345");
-        verify(activityEventRepository).save(any(ActivityEventEntity.class));
+        verify(activityEventRepository, never()).findByEventId(anyString());
     }
 
     @Test
-    @DisplayName("Should propagate database exception when transient DB error occurs to allow consumer retry")
+    @DisplayName("Should propagate database exception when transient DB error occurs")
     void shouldPropagateDatabaseExceptionOnTransientFailure() {
-        when(activityEventRepository.existsByEventId("evt-12345")).thenReturn(false);
-        when(activityEventRepository.save(any(ActivityEventEntity.class)))
+        when(jdbcTemplate.update(anyString(), any(), any(), any(), any(), any(), any(), any()))
                 .thenThrow(new QueryTimeoutException("Database connection timeout"));
 
         assertThatThrownBy(() -> persistenceService.persist(sampleEvent))
                 .isInstanceOf(QueryTimeoutException.class)
                 .hasMessageContaining("Database connection timeout");
+
+        verify(userSessionAggregationService, never()).recordEventInSession(any());
     }
 
     @Test

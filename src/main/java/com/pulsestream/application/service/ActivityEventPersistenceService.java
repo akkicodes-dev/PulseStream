@@ -1,27 +1,33 @@
 package com.pulsestream.application.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pulsestream.domain.event.ActivityEvent;
 import com.pulsestream.infrastructure.persistence.entity.ActivityEventEntity;
 import com.pulsestream.infrastructure.persistence.repository.ActivityEventRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.ZoneOffset;
+import java.sql.Timestamp;
 import java.util.Optional;
 
 /**
- * Service responsible for persisting validated activity events to PostgreSQL.
+ * Service responsible for persisting validated activity events to PostgreSQL and triggering
+ * real-time session aggregation.
  *
  * <p>Key Guarantees:
  * <ul>
- *   <li><b>Idempotency:</b> Checks {@link ActivityEventRepository#existsByEventId(String)} before insertion.
- *       Catches {@link DataIntegrityViolationException} in case of concurrent delivery races.</li>
- *   <li><b>Transactional Boundary:</b> Runs within {@code @Transactional} to guarantee atomicity.
- *       Unchecked database errors propagate to trigger Kafka consumer retry mechanisms.</li>
- *   <li><b>Schema Integrity:</b> Reuses existing {@link ActivityEventEntity} and database constraints.</li>
+ *   <li><b>Transaction-Safe Idempotency:</b> Employs native {@code ON CONFLICT (event_id) DO NOTHING}
+ *       via {@link JdbcTemplate}. Unlike catching {@code DataIntegrityViolationException} in JPA,
+ *       this does NOT mark the physical database transaction as rollback-only.</li>
+ *   <li><b>Atomic Event &amp; Session Aggregation:</b> Session aggregation runs ONLY when a genuinely new
+ *       event row is inserted (affected rows = 1). Both writes share the exact same transaction boundary;
+ *       if session aggregation fails, the event insertion is also rolled back.</li>
+ *   <li><b>Duplicate Concurrency Guard:</b> If a duplicate event arrives concurrently, the native conflict
+ *       resolves cleanly (affected rows = 0) without triggering session increments or corrupting session lifecycle.</li>
  * </ul>
  */
 @Service
@@ -29,10 +35,19 @@ import java.util.Optional;
 @Slf4j
 public class ActivityEventPersistenceService {
 
+    private final JdbcTemplate jdbcTemplate;
+    private final ObjectMapper objectMapper;
     private final ActivityEventRepository activityEventRepository;
+    private final UserSessionAggregationService userSessionAggregationService;
+
+    private static final String INSERT_EVENT_SQL =
+            "INSERT INTO activity_events " +
+            "(id, event_id, user_id, session_id, event_type, event_timestamp, source, metadata, processed, received_at) " +
+            "VALUES (gen_random_uuid(), ?, ?, ?, ?, ?, ?, ?::jsonb, false, now()) " +
+            "ON CONFLICT (event_id) DO NOTHING";
 
     /**
-     * Persists a domain {@link ActivityEvent} into PostgreSQL if not already present.
+     * Persists a domain {@link ActivityEvent} into PostgreSQL idempotently and updates the associated user session.
      *
      * @param event Validated activity event received from the Kafka pipeline
      * @return The persisted or existing {@link ActivityEventEntity}
@@ -47,33 +62,38 @@ public class ActivityEventPersistenceService {
             throw new IllegalArgumentException("ActivityEvent eventId cannot be null or blank");
         }
 
-        // 1. Application-level idempotency check
-        if (activityEventRepository.existsByEventId(event.eventId())) {
-            log.info("Duplicate event detected (eventId={}). Skipping insertion to preserve idempotency.", event.eventId());
-            return activityEventRepository.findByEventId(event.eventId()).orElse(null);
-        }
-
-        // 2. Map domain event to JPA entity
-        ActivityEventEntity entity = new ActivityEventEntity();
-        entity.setEventId(event.eventId());
-        entity.setUserId(event.userId());
-        entity.setSessionId(event.sessionId());
-        entity.setEventType(event.eventType());
-        entity.setEventTimestamp(event.timestamp().atOffset(ZoneOffset.UTC));
-        entity.setSource(event.source());
-        entity.setMetadata(event.metadata());
-        entity.setProcessed(false);
-
-        // 3. Database persistence with duplicate race guard
+        String metadataJson;
         try {
-            ActivityEventEntity saved = activityEventRepository.save(entity);
-            log.debug("Successfully persisted ActivityEvent to PostgreSQL: eventId={}, id={}", saved.getEventId(), saved.getId());
-            return saved;
-        } catch (DataIntegrityViolationException ex) {
-            log.warn("Database unique constraint violation for eventId={}. Concurrent duplicate delivery handled idempotently.",
-                    event.eventId());
-            return activityEventRepository.findByEventId(event.eventId()).orElse(null);
+            metadataJson = (event.metadata() != null && !event.metadata().isEmpty())
+                    ? objectMapper.writeValueAsString(event.metadata())
+                    : null;
+        } catch (JsonProcessingException e) {
+            log.error("Failed to serialize metadata to JSON for eventId={}", event.eventId(), e);
+            throw new IllegalArgumentException("Invalid event metadata JSON", e);
         }
+
+        // Execute transaction-safe atomic insert with conflict guard
+        int affectedRows = jdbcTemplate.update(
+                INSERT_EVENT_SQL,
+                event.eventId(),
+                event.userId(),
+                event.sessionId(),
+                event.eventType().name(),
+                Timestamp.from(event.timestamp()),
+                event.source().name().toLowerCase(java.util.Locale.ROOT),
+                metadataJson
+        );
+
+        if (affectedRows == 1) {
+            log.debug("Successfully persisted new ActivityEvent: eventId={}", event.eventId());
+            // Atomic session aggregation: runs only for genuinely new event inserts
+            userSessionAggregationService.recordEventInSession(event);
+        } else {
+            log.info("Duplicate event detected (eventId={}). Conflict handled safely without session re-aggregation.",
+                    event.eventId());
+        }
+
+        return activityEventRepository.findByEventId(event.eventId()).orElse(null);
     }
 
     /**

@@ -33,7 +33,7 @@ PulseStream solves:
 | Project foundation, Docker Compose | M1 | ✅ Complete |
 | Event ingestion API (`POST /api/v1/events`) | M2 | ✅ Complete |
 | Kafka producer + consumer + idempotency | M3 | ✅ Complete |
-| Kafka Streams session aggregation | M4 | 🔲 Planned |
+| Real-time analytics + session aggregation | M4 | ✅ Complete |
 | Elasticsearch analytics + query API | M5 | 🔲 Planned |
 | Observability (structured logging, metrics) | M6 | 🔲 Planned |
 | Full test suite + documentation | M7 | 🔲 Planned |
@@ -205,29 +205,25 @@ Key variables:
 
 ## Database Schema
 
-Three tables managed by Flyway migrations:
-
-| Table | Purpose |
-|-------|---------|
-| `users` | Lightweight user reference (lazy creation) |
-| `activity_events` | Canonical event record (idempotency via UNIQUE on `event_id`) |
-| `user_sessions` | Aggregated session state |
+Four migrations managed by Flyway:
+- `V1__create_users_table.sql`: Lightweight user reference.
+- `V2__create_activity_events_table.sql`: Canonical event record (UNIQUE on `event_id`, JSONB metadata, check constraints).
+- `V3__create_user_sessions_table.sql`: Aggregated session state (UNIQUE on `session_id`, `event_count`, `last_seen_at`, `ended_at`).
+- `V4__add_analytics_indexes.sql`: Compound time-series indexes (`idx_ae_ts_type`, `idx_ae_ts_source`) and active session partial index (`idx_us_active_last_seen`).
 
 ---
 
 ## API Endpoints
 
-Full documentation available at `/swagger-ui.html` when the app is running.
+Full interactive OpenAPI / Swagger UI documentation available at `http://localhost:8081/swagger-ui.html`.
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/v1/events` | Ingest a user activity event |
-| `GET` | `/api/v1/users/{userId}/activity` | Paginated user activity |
-| `GET` | `/api/v1/users/{userId}/sessions` | User session history |
-| `GET` | `/api/v1/users/{userId}/summary` | User activity summary |
-| `GET` | `/api/v1/analytics/summary` | Platform-wide analytics |
-| `GET` | `/api/v1/analytics/top-users` | Most active users |
-| `GET` | `/api/v1/analytics/event-types` | Event type breakdown |
+| Method | Path | Description | Milestone |
+|--------|------|-------------|-----------|
+| `POST` | `/api/v1/events` | Ingest user activity event into Kafka pipeline (202 Accepted) | M2 |
+| `GET` | `/api/v1/analytics/overview` | Platform activity totals, unique users, active sessions, breakdowns | M4 |
+| `GET` | `/api/v1/analytics/timeseries` | Continuous UTC time-series with zero-filled gaps (`MINUTE`, `HOUR`, `DAY`) | M4 |
+| `GET` | `/api/v1/analytics/users/{userId}` | Lifetime user activity summary, sessions, and event type breakdown | M4 |
+| `GET` | `/api/v1/analytics/sessions/active` | Paginated active sessions within inactivity window | M4 |
 
 ---
 

@@ -134,6 +134,27 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
     }
 
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<ErrorResponse> handleIllegalArgumentException(
+            IllegalArgumentException ex, HttpServletRequest request) {
+
+        String path = request.getRequestURI();
+        String reqId = resolveRequestId(request);
+
+        log.warn("Invalid argument on path {}: {}", path, ex.getMessage());
+
+        ErrorResponse errorResponse = new ErrorResponse(
+                HttpStatus.BAD_REQUEST.value(),
+                HttpStatus.BAD_REQUEST.getReasonPhrase(),
+                ex.getMessage(),
+                path,
+                reqId,
+                null
+        );
+
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(errorResponse);
+    }
+
     @ExceptionHandler(EventPublishingException.class)
     public ResponseEntity<ErrorResponse> handleEventPublishingException(
             EventPublishingException ex, HttpServletRequest request) {

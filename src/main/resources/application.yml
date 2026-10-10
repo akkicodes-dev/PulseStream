@@ -141,6 +141,8 @@ pulsestream:
     publish-timeout-ms: ${KAFKA_PUBLISH_TIMEOUT_MS:5000}
   session:
     timeout-minutes: ${SESSION_TIMEOUT_MINUTES:30}  # Configurable session inactivity window
+    inactivity-timeout-minutes: ${SESSION_INACTIVITY_TIMEOUT_MINUTES:30}
+    expiration-check-interval-ms: ${SESSION_EXPIRATION_CHECK_INTERVAL_MS:60000}
   elasticsearch:
     host: ${ELASTICSEARCH_HOST:localhost}
     port: ${ELASTICSEARCH_PORT:9200}

@@ -339,4 +339,46 @@ Record-level acknowledgment (`AckMode.RECORD`) combined with an idempotent `@Tra
 ### Delivery Semantic
 At-least-once delivery with idempotent persistence. Not Kafka transactional exactly-once, but guarantees no message loss and no duplicate database rows.
 
+---
+
+## ADR-012: Real-Time Analytics and Session Aggregation (M4)
+
+**Date**: 2026-10-10  
+**Status**: Accepted
+
+### Problem
+How to provide real-time platform activity metrics, aggregated time-series trends, per-user summaries, and active session tracking using the existing PostgreSQL and Kafka infrastructure without introducing Redis, Elasticsearch, or additional containers?
+
+### Key Architectural Decisions
+
+1. **Transaction-Safe Atomic Event & Session Aggregation**:
+   - In Spring Data JPA, catching `DataIntegrityViolationException` inside an active `@Transactional` boundary causes Hibernate to flag the physical transaction as rollback-only.
+   - To avoid transaction poisoning while preserving the database unique constraint (`uq_activity_events_event_id`), event insertion executes native parameterized SQL via `JdbcTemplate`:
+     ```sql
+     INSERT INTO activity_events (...) VALUES (...) ON CONFLICT (event_id) DO NOTHING
+     ```
+   - Session aggregation runs strictly when `affectedRows == 1` (a genuinely new event was inserted). Duplicate deliveries resolve safely with `affectedRows == 0`, skipping session re-aggregation and preserving exact `event_count` metrics.
+   - Event insertion and session aggregation participate in the identical database transaction, ensuring atomicity.
+
+2. **Closed-Session Invariants & Lifecycle Integrity**:
+   - A session closed by an explicit `LOGOUT` event or inactivity expiration sweep must **never** be silently reopened by late-arriving events.
+   - For closed sessions (`isActive == false`), late events increment `event_count` and adjust `last_seen_at` without mutating `isActive` or corrupting `endedAt`.
+   - Out-of-order events adjust `started_at` backwards if earlier than the current session start time.
+
+3. **Inactivity Expiration Sweep**:
+   - An asynchronous `@Scheduled` periodic sweep executes every 60 seconds (`pulsestream.session.expiration-check-interval-ms`).
+   - Executes an atomic bulk update:
+     ```sql
+     UPDATE user_sessions u SET u.isActive = false, u.endedAt = u.lastSeenAt
+     WHERE u.isActive = true AND u.lastSeenAt <= :cutoff
+     ```
+   - Partial index `idx_us_active_last_seen ON user_sessions(last_seen_at DESC) WHERE is_active = TRUE` ensures this query remains an efficient index scan regardless of table size.
+
+4. **Bounded Time-Series Analytics & Continuous UTC Gap-Filling**:
+   - Intervals are strictly validated against an allowlist: `MINUTE` (max range: 6h), `HOUR` (max range: 14d), `DAY` (max range: 90d).
+   - Hard ceiling of 500 buckets prevents memory exhaustion and unbounded database load.
+   - Static parameterized native queries avoid any dynamic SQL string concatenation.
+   - Continuous UTC gap-filling generates missing buckets populated with 0 counts for reliable dashboard charting.
+
+
 
