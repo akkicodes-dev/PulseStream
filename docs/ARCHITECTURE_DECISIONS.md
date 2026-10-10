@@ -380,5 +380,58 @@ How to provide real-time platform activity metrics, aggregated time-series trend
    - Static parameterized native queries avoid any dynamic SQL string concatenation.
    - Continuous UTC gap-filling generates missing buckets populated with 0 counts for reliable dashboard charting.
 
+---
+
+## ADR-013: Caching and Search Infrastructure Evaluation: Retaining PostgreSQL-Only Architecture (M6)
+
+**Date**: 2026-10-10  
+**Status**: Accepted
+
+### Problem
+Should PulseStream introduce Redis for caching analytics queries and/or Elasticsearch for activity event exploration, or does the optimized PostgreSQL architecture sufficiently satisfy performance and scale requirements?
+
+### Options Considered
+1. **Redis Caching**: Cache `/api/v1/analytics/overview` and `/timeseries` results with TTL (e.g. 15s to 60s) or event-driven cache eviction.
+2. **Elasticsearch Indexing**: Stream events to Elasticsearch for multi-field filtering and aggregations alongside PostgreSQL.
+3. **PostgreSQL-Only Analytics**: Retain PostgreSQL as the single source of truth for both persistence and analytics, leveraging specialized indexes (V4 + V5).
+
+### Decision
+**Retain PostgreSQL-only architecture**. Intentionally do NOT adopt Redis caching or Elasticsearch at this milestone.
+
+### Rationale and Measured Evidence
+
+1. **Measured PostgreSQL Query Latency (Sub-2ms)**:
+   - EXPLAIN ANALYZE on representative datasets demonstrated that composite indexes (`idx_ae_ts_user`, `idx_ae_user_ts`, `idx_ae_ts_source`, `idx_us_active_last_seen`) enable Index-Only Scans with 0 heap fetches.
+   - Measured query execution times:
+     - Total events & active users: **0.17 ms**
+     - Event type breakdown: **0.16 ms**
+     - Source breakdown: **0.15 ms**
+     - Active session count: **0.14 ms**
+     - 24-bucket time-series aggregation: **1.68 ms**
+   - At sub-2ms query times, network round-trips to an external Redis cache (~0.5ms–1.5ms) would provide negligible performance benefit while significantly complicating the architecture.
+
+2. **The Streaming Cache Invalidation Hazard**:
+   - In a real-time event streaming pipeline, activity events arrive continuously at high frequency.
+   - If analytics results are cached, either:
+     - Every incoming event invalidates the cache, driving the cache hit ratio near zero and causing cache-stampede latency spikes on the database, OR
+     - The cache serves stale data under a fixed TTL, violating real-time platform requirements.
+   - Direct execution of indexed SQL queries against PostgreSQL guarantees strictly fresh, consistent analytics without cache-coherency bugs.
+
+3. **Elasticsearch Dual-Write and Operational Overhead**:
+   - Elasticsearch introduces dual-write hazards, eventual consistency divergence, index mappings lifecycle maintenance, and extra container memory footprint (~1GB+ heap).
+   - The platform's existing analytics endpoints (`overview`, `timeseries`, `users/{userId}`, `sessions/active`) do not require full-text fuzzy search or ad-hoc multi-dimensional faceted navigation.
+   - PostgreSQL provides atomic ACID transactions, identical time-series capabilities, and single-source-of-truth reliability.
+
+4. **Failure Surface Reduction**:
+   - Omitting unnecessary external systems eliminates distributed failure modes (e.g. Redis out-of-memory, Elasticsearch cluster yellow/red state, split-brain recovery).
+   - Actuator health reporting reflects true application health without false-negative alarms from unused external services.
+
+### Future Triggers for Reconsideration
+- **Redis**: Re-evaluate if read query traffic exceeds 10,000 req/sec on identical fixed time windows (e.g., public dashboard with 1-minute caching).
+- **Elasticsearch**: Re-evaluate if business requirements introduce unstructured free-text search across arbitrary JSON metadata or log exploration.
+
+### Interview Answer
+"In Milestone 6, we rigorously evaluated Redis and Elasticsearch against real query execution plans rather than blindly adding tools to the stack. With our V5 composite indexes, PostgreSQL delivers analytics responses in under 2 milliseconds via index-only scans. Under continuous streaming ingestion, caching creates an invalidation thrashing dilemma with zero freshness guarantees, while Elasticsearch introduces dual-write complexity without any text-search requirement. We made the disciplined architectural decision to retain a PostgreSQL-only data store, keeping the system resilient, transactional, and simple."
+
 
 

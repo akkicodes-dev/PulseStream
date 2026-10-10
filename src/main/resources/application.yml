@@ -101,9 +101,9 @@ management:
       enabled: true
   health:
     redis:
-      enabled: true
+      enabled: false
     elasticsearch:
-      enabled: true
+      enabled: false
 
 # ─── Application Info (shown at /actuator/info) ──────────────
 info:
