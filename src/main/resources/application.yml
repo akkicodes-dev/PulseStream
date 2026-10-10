@@ -88,22 +88,33 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics,env,loggers
+        include: health,info,metrics,prometheus
       base-path: /actuator
   endpoint:
     health:
-      show-details: always        # Expose component-level health (DB, Kafka, Redis, ES)
+      show-details: always        # Detailed component-level health for operators
       show-components: always
+      probes:
+        enabled: true             # Enables /actuator/health/liveness and /actuator/health/readiness
   info:
     env:
-      enabled: true
+      enabled: false             # Never expose environment variables via /actuator/info
     build:
       enabled: true
   health:
+    livenessstate:
+      enabled: true
+    readinessstate:
+      enabled: true
+    db:
+      enabled: true
     redis:
       enabled: false
     elasticsearch:
       enabled: false
+  metrics:
+    tags:
+      application: ${spring.application.name:pulsestream}
 
 # ─── Application Info (shown at /actuator/info) ──────────────
 info:

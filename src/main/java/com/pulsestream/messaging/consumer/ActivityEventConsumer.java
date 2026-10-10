@@ -2,10 +2,12 @@ package com.pulsestream.messaging.consumer;
 
 import com.pulsestream.application.service.ActivityEventPersistenceService;
 import com.pulsestream.domain.event.ActivityEvent;
-import lombok.RequiredArgsConstructor;
+import com.pulsestream.infrastructure.metrics.PulseStreamMetrics;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.annotation.KafkaListener;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 
 /**
@@ -13,11 +15,22 @@ import org.springframework.stereotype.Component;
  * and driving persistence into PostgreSQL.
  */
 @Component
-@RequiredArgsConstructor
 @Slf4j
 public class ActivityEventConsumer {
 
     private final ActivityEventPersistenceService activityEventPersistenceService;
+    private final PulseStreamMetrics metrics;
+
+    public ActivityEventConsumer(ActivityEventPersistenceService activityEventPersistenceService) {
+        this(activityEventPersistenceService, null);
+    }
+
+    @Autowired
+    public ActivityEventConsumer(ActivityEventPersistenceService activityEventPersistenceService,
+                                 @Nullable PulseStreamMetrics metrics) {
+        this.activityEventPersistenceService = activityEventPersistenceService;
+        this.metrics = metrics;
+    }
 
     @KafkaListener(
             topics = "${pulsestream.kafka.topics.activity-events:user.activity.events}",
@@ -35,6 +48,13 @@ public class ActivityEventConsumer {
         log.info("Consuming ActivityEvent from Kafka [topic={}, partition={}, offset={}, key={}]: eventId={}, type={}",
                 record.topic(), record.partition(), record.offset(), record.key(), event.eventId(), event.eventType());
 
-        activityEventPersistenceService.persist(event);
+        try {
+            activityEventPersistenceService.persist(event);
+        } catch (RuntimeException e) {
+            if (metrics != null) {
+                metrics.recordConsumerFailure("persistence_error");
+            }
+            throw e;
+        }
     }
 }

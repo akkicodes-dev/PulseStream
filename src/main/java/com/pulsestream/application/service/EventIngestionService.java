@@ -4,7 +4,10 @@ import com.pulsestream.api.dto.EventRequest;
 import com.pulsestream.api.dto.EventResponse;
 import com.pulsestream.domain.event.ActivityEvent;
 import com.pulsestream.messaging.producer.EventProducer;
+import com.pulsestream.infrastructure.metrics.PulseStreamMetrics;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 
 import java.util.UUID;
@@ -20,9 +23,16 @@ import java.util.UUID;
 public class EventIngestionService {
 
     private final EventProducer eventProducer;
+    private final PulseStreamMetrics metrics;
 
     public EventIngestionService(EventProducer eventProducer) {
+        this(eventProducer, null);
+    }
+
+    @Autowired
+    public EventIngestionService(EventProducer eventProducer, @Nullable PulseStreamMetrics metrics) {
         this.eventProducer = eventProducer;
+        this.metrics = metrics;
     }
 
     /**
@@ -45,6 +55,10 @@ public class EventIngestionService {
         );
 
         eventProducer.sendEvent(domainEvent);
+
+        if (metrics != null) {
+            metrics.recordEventAccepted(domainEvent.eventType().name(), domainEvent.source().name());
+        }
 
         return EventResponse.accepted(eventId);
     }

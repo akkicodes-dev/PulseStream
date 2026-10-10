@@ -6,6 +6,9 @@ import com.pulsestream.infrastructure.persistence.repository.ActivityEventReposi
 import com.pulsestream.infrastructure.persistence.repository.UserSessionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import com.pulsestream.infrastructure.metrics.PulseStreamMetrics;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.lang.Nullable;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -32,13 +35,26 @@ import java.util.*;
  * </ul>
  */
 @Service
-@RequiredArgsConstructor
 @Slf4j
 @Transactional(readOnly = true)
 public class AnalyticsService {
 
     private final ActivityEventRepository activityEventRepository;
     private final UserSessionRepository userSessionRepository;
+    private final PulseStreamMetrics metrics;
+
+    public AnalyticsService(ActivityEventRepository activityEventRepository, UserSessionRepository userSessionRepository) {
+        this(activityEventRepository, userSessionRepository, null);
+    }
+
+    @Autowired
+    public AnalyticsService(ActivityEventRepository activityEventRepository,
+                            UserSessionRepository userSessionRepository,
+                            @Nullable PulseStreamMetrics metrics) {
+        this.activityEventRepository = activityEventRepository;
+        this.userSessionRepository = userSessionRepository;
+        this.metrics = metrics;
+    }
 
     @Value("${pulsestream.session.inactivity-timeout-minutes:30}")
     private long inactivityTimeoutMinutes = 30;
@@ -82,6 +98,13 @@ public class AnalyticsService {
      * Retrieves high-level platform activity metrics within the inclusive range {@code [from, to]}.
      */
     public AnalyticsOverviewResponse getOverview(OffsetDateTime from, OffsetDateTime to) {
+        if (metrics != null) {
+            return metrics.recordAnalyticsTimer("overview", () -> executeGetOverview(from, to));
+        }
+        return executeGetOverview(from, to);
+    }
+
+    private AnalyticsOverviewResponse executeGetOverview(OffsetDateTime from, OffsetDateTime to) {
         OffsetDateTime nowUtc = OffsetDateTime.now(ZoneOffset.UTC);
         OffsetDateTime effectiveTo = to != null ? to.withOffsetSameInstant(ZoneOffset.UTC) : nowUtc;
         OffsetDateTime effectiveFrom = from != null ? from.withOffsetSameInstant(ZoneOffset.UTC) : effectiveTo.minusDays(1);
@@ -121,6 +144,13 @@ public class AnalyticsService {
      * Generates a continuous UTC time-series of event counts and unique active users.
      */
     public TimeSeriesResponse getTimeSeries(String intervalStr, OffsetDateTime from, OffsetDateTime to) {
+        if (metrics != null) {
+            return metrics.recordAnalyticsTimer("timeseries", () -> executeGetTimeSeries(intervalStr, from, to));
+        }
+        return executeGetTimeSeries(intervalStr, from, to);
+    }
+
+    private TimeSeriesResponse executeGetTimeSeries(String intervalStr, OffsetDateTime from, OffsetDateTime to) {
         TimeInterval interval = TimeInterval.fromString(intervalStr)
                 .orElseThrow(() -> new IllegalArgumentException(
                         "Invalid interval: '" + intervalStr + "'. Allowed intervals are: MINUTE, HOUR, DAY"));
@@ -213,6 +243,13 @@ public class AnalyticsService {
      * Retrieves activity and session metrics for a single user.
      */
     public UserAnalyticsResponse getUserAnalytics(String userId) {
+        if (metrics != null) {
+            return metrics.recordAnalyticsTimer("user_analytics", () -> executeGetUserAnalytics(userId));
+        }
+        return executeGetUserAnalytics(userId);
+    }
+
+    private UserAnalyticsResponse executeGetUserAnalytics(String userId) {
         if (userId == null || userId.isBlank()) {
             throw new IllegalArgumentException("userId cannot be null or blank");
         }
@@ -252,6 +289,13 @@ public class AnalyticsService {
      * Retrieves paginated active user sessions.
      */
     public Page<ActiveSessionResponse> getActiveSessions(int page, int size) {
+        if (metrics != null) {
+            return metrics.recordAnalyticsTimer("active_sessions", () -> executeGetActiveSessions(page, size));
+        }
+        return executeGetActiveSessions(page, size);
+    }
+
+    private Page<ActiveSessionResponse> executeGetActiveSessions(int page, int size) {
         int boundedPage = Math.max(0, page);
         int boundedSize = Math.clamp(size, 1, 100);
 

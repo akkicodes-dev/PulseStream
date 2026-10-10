@@ -101,9 +101,16 @@ public class KafkaConsumerConfig {
     }
 
     @Bean
-    public DeadLetterPublishingRecoverer activityEventDlqRecoverer(KafkaTemplate<Object, Object> dlqKafkaTemplate) {
+    public DeadLetterPublishingRecoverer activityEventDlqRecoverer(
+            KafkaTemplate<Object, Object> dlqKafkaTemplate,
+            @org.springframework.lang.Nullable com.pulsestream.infrastructure.metrics.PulseStreamMetrics metrics) {
         return new DeadLetterPublishingRecoverer(dlqKafkaTemplate,
-                (consumerRecord, exception) -> new TopicPartition(dlqTopic, 0));
+                (consumerRecord, exception) -> {
+                    if (metrics != null) {
+                        metrics.recordDlqRouted(dlqTopic, exception != null ? exception.getClass().getSimpleName() : "unknown");
+                    }
+                    return new TopicPartition(dlqTopic, 0);
+                });
     }
 
     @Bean

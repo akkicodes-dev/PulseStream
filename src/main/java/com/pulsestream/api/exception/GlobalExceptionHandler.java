@@ -25,6 +25,10 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
+import com.pulsestream.infrastructure.metrics.PulseStreamMetrics;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.lang.Nullable;
+
 /**
  * Centralized exception handler providing consistent, RFC-7807-inspired error responses.
  *
@@ -35,9 +39,24 @@ import java.util.List;
 @Slf4j
 public class GlobalExceptionHandler {
 
+    private final PulseStreamMetrics metrics;
+
+    public GlobalExceptionHandler() {
+        this(null);
+    }
+
+    @Autowired
+    public GlobalExceptionHandler(@Nullable PulseStreamMetrics metrics) {
+        this.metrics = metrics;
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ErrorResponse> handleMethodArgumentNotValid(
             MethodArgumentNotValidException ex, HttpServletRequest request) {
+
+        if (metrics != null) {
+            metrics.recordEventRejected("validation_error");
+        }
 
         List<String> details = new ArrayList<>();
         for (FieldError fieldError : ex.getBindingResult().getFieldErrors()) {
@@ -64,6 +83,10 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ErrorResponse> handleHttpMessageNotReadable(
             HttpMessageNotReadableException ex, HttpServletRequest request) {
+
+        if (metrics != null) {
+            metrics.recordEventRejected("malformed_json");
+        }
 
         String path = request.getRequestURI();
         String reqId = resolveRequestId(request);
@@ -113,6 +136,10 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleConstraintViolation(
             ConstraintViolationException ex, HttpServletRequest request) {
 
+        if (metrics != null) {
+            metrics.recordEventRejected("constraint_violation");
+        }
+
         List<String> details = ex.getConstraintViolations().stream()
                 .map(cv -> cv.getPropertyPath() + ": " + cv.getMessage())
                 .toList();
@@ -138,6 +165,10 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleIllegalArgumentException(
             IllegalArgumentException ex, HttpServletRequest request) {
 
+        if (metrics != null) {
+            metrics.recordEventRejected("illegal_argument");
+        }
+
         String path = request.getRequestURI();
         String reqId = resolveRequestId(request);
 
@@ -159,6 +190,10 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleEventPublishingException(
             EventPublishingException ex, HttpServletRequest request) {
 
+        if (metrics != null) {
+            metrics.recordEventRejected("kafka_unavailable");
+        }
+
         String path = request.getRequestURI();
         String reqId = resolveRequestId(request);
 
@@ -174,6 +209,44 @@ public class GlobalExceptionHandler {
         );
 
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(errorResponse);
+    }
+
+    @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
+    public ResponseEntity<ErrorResponse> handleNoResourceFound(
+            org.springframework.web.servlet.resource.NoResourceFoundException ex, HttpServletRequest request) {
+
+        String path = request.getRequestURI();
+        String reqId = resolveRequestId(request);
+
+        ErrorResponse errorResponse = new ErrorResponse(
+                HttpStatus.NOT_FOUND.value(),
+                HttpStatus.NOT_FOUND.getReasonPhrase(),
+                "Resource not found: " + path,
+                path,
+                reqId,
+                null
+        );
+
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(errorResponse);
+    }
+
+    @ExceptionHandler(org.springframework.web.HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ErrorResponse> handleMethodNotSupported(
+            org.springframework.web.HttpRequestMethodNotSupportedException ex, HttpServletRequest request) {
+
+        String path = request.getRequestURI();
+        String reqId = resolveRequestId(request);
+
+        ErrorResponse errorResponse = new ErrorResponse(
+                HttpStatus.METHOD_NOT_ALLOWED.value(),
+                HttpStatus.METHOD_NOT_ALLOWED.getReasonPhrase(),
+                ex.getMessage(),
+                path,
+                reqId,
+                null
+        );
+
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED).body(errorResponse);
     }
 
     @ExceptionHandler(Exception.class)

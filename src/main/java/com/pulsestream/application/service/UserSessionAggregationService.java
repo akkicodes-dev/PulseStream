@@ -4,9 +4,11 @@ import com.pulsestream.domain.event.ActivityEvent;
 import com.pulsestream.domain.event.EventType;
 import com.pulsestream.infrastructure.persistence.entity.UserSessionEntity;
 import com.pulsestream.infrastructure.persistence.repository.UserSessionRepository;
-import lombok.RequiredArgsConstructor;
+import com.pulsestream.infrastructure.metrics.PulseStreamMetrics;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.lang.Nullable;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,14 +32,24 @@ import java.util.Optional;
  * </ul>
  */
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class UserSessionAggregationService {
 
     private final UserSessionRepository userSessionRepository;
+    private final PulseStreamMetrics metrics;
 
     @Value("${pulsestream.session.inactivity-timeout-minutes:30}")
     private long inactivityTimeoutMinutes = 30;
+
+    public UserSessionAggregationService(UserSessionRepository userSessionRepository) {
+        this(userSessionRepository, null);
+    }
+
+    @Autowired
+    public UserSessionAggregationService(UserSessionRepository userSessionRepository, @Nullable PulseStreamMetrics metrics) {
+        this.userSessionRepository = userSessionRepository;
+        this.metrics = metrics;
+    }
 
     /**
      * Records an activity event in its associated session, creating or updating the session state.
@@ -77,6 +89,12 @@ public class UserSessionAggregationService {
             }
 
             userSessionRepository.save(newSession);
+            if (metrics != null) {
+                metrics.recordSessionCreated();
+                if (event.eventType() == EventType.LOGOUT) {
+                    metrics.recordSessionClosed("logout");
+                }
+            }
             return;
         }
 
@@ -99,6 +117,9 @@ public class UserSessionAggregationService {
                 session.setActive(false);
                 session.setEndedAt(eventTime);
                 log.info("Closed active session on LOGOUT: sessionId={}, userId={}", sessionId, event.userId());
+                if (metrics != null) {
+                    metrics.recordSessionClosed("logout");
+                }
             }
         } else {
             // SAFEGUARD: Session is already closed (via LOGOUT or inactivity expiration).
@@ -123,6 +144,11 @@ public class UserSessionAggregationService {
         int deactivatedCount = userSessionRepository.deactivateSessionsOlderThan(cutoff);
         if (deactivatedCount > 0) {
             log.info("Inactivity sweep: closed {} sessions idle since {}", deactivatedCount, cutoff);
+            if (metrics != null) {
+                for (int i = 0; i < deactivatedCount; i++) {
+                    metrics.recordSessionClosed("inactivity_sweep");
+                }
+            }
         }
         return deactivatedCount;
     }

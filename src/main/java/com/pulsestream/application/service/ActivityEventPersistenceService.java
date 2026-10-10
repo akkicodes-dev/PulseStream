@@ -8,6 +8,9 @@ import com.pulsestream.infrastructure.persistence.repository.ActivityEventReposi
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
+import com.pulsestream.infrastructure.metrics.PulseStreamMetrics;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -31,7 +34,6 @@ import java.util.Optional;
  * </ul>
  */
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class ActivityEventPersistenceService {
 
@@ -39,6 +41,29 @@ public class ActivityEventPersistenceService {
     private final ObjectMapper objectMapper;
     private final ActivityEventRepository activityEventRepository;
     private final UserSessionAggregationService userSessionAggregationService;
+    private final PulseStreamMetrics metrics;
+
+    public ActivityEventPersistenceService(
+            JdbcTemplate jdbcTemplate,
+            ObjectMapper objectMapper,
+            ActivityEventRepository activityEventRepository,
+            UserSessionAggregationService userSessionAggregationService) {
+        this(jdbcTemplate, objectMapper, activityEventRepository, userSessionAggregationService, null);
+    }
+
+    @Autowired
+    public ActivityEventPersistenceService(
+            JdbcTemplate jdbcTemplate,
+            ObjectMapper objectMapper,
+            ActivityEventRepository activityEventRepository,
+            UserSessionAggregationService userSessionAggregationService,
+            @Nullable PulseStreamMetrics metrics) {
+        this.jdbcTemplate = jdbcTemplate;
+        this.objectMapper = objectMapper;
+        this.activityEventRepository = activityEventRepository;
+        this.userSessionAggregationService = userSessionAggregationService;
+        this.metrics = metrics;
+    }
 
     private static final String INSERT_EVENT_SQL =
             "INSERT INTO activity_events " +
@@ -73,24 +98,38 @@ public class ActivityEventPersistenceService {
         }
 
         // Execute transaction-safe atomic insert with conflict guard
-        int affectedRows = jdbcTemplate.update(
-                INSERT_EVENT_SQL,
-                event.eventId(),
-                event.userId(),
-                event.sessionId(),
-                event.eventType().name(),
-                Timestamp.from(event.timestamp()),
-                event.source().name().toLowerCase(java.util.Locale.ROOT),
-                metadataJson
-        );
+        int affectedRows;
+        try {
+            affectedRows = jdbcTemplate.update(
+                    INSERT_EVENT_SQL,
+                    event.eventId(),
+                    event.userId(),
+                    event.sessionId(),
+                    event.eventType().name(),
+                    Timestamp.from(event.timestamp()),
+                    event.source().name().toLowerCase(java.util.Locale.ROOT),
+                    metadataJson
+            );
+        } catch (RuntimeException e) {
+            if (metrics != null) {
+                metrics.recordPersistenceFailure("db_error");
+            }
+            throw e;
+        }
 
         if (affectedRows == 1) {
             log.debug("Successfully persisted new ActivityEvent: eventId={}", event.eventId());
             // Atomic session aggregation: runs only for genuinely new event inserts
             userSessionAggregationService.recordEventInSession(event);
+            if (metrics != null) {
+                metrics.recordEventPersisted(event.eventType().name(), event.source().name());
+            }
         } else {
             log.info("Duplicate event detected (eventId={}). Conflict handled safely without session re-aggregation.",
                     event.eventId());
+            if (metrics != null) {
+                metrics.recordEventDuplicate(event.source().name());
+            }
         }
 
         return activityEventRepository.findByEventId(event.eventId()).orElse(null);
