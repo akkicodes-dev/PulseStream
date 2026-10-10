@@ -1,0 +1,150 @@
+# PulseStream — Main Application Configuration
+# All sensitive values are loaded from environment variables.
+# See .env.example for all required variables.
+# Never commit real credentials — use .env (gitignored) locally.
+
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  application:
+    name: pulsestream
+
+  # ─── PostgreSQL ───────────────────────────────────────────────
+  datasource:
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:pulsestream}
+    username: ${POSTGRES_USER:pulsestream}
+    password: ${POSTGRES_PASSWORD:pulsestream_dev}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      pool-name: PulseStreamHikariPool
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  # ─── JPA / Hibernate ──────────────────────────────────────────
+  jpa:
+    hibernate:
+      ddl-auto: validate          # Flyway owns schema — Hibernate only validates
+    show-sql: false               # Never log SQL in production; use query logs for debugging
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: false
+        jdbc:
+          time_zone: UTC
+
+  # ─── Flyway ───────────────────────────────────────────────────
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: false
+    out-of-order: false
+
+  # ─── Kafka ────────────────────────────────────────────────────
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      acks: ${KAFKA_PRODUCER_ACKS:all}                   # Leader + all ISR replicas must ack (strongest guarantee)
+      retries: ${KAFKA_PRODUCER_RETRIES:3}
+      properties:
+        enable.idempotence: true  # Producer-level idempotence (no duplicate messages from producer)
+        max.in.flight.requests.per.connection: 1
+        spring.json.add.type.headers: false
+    consumer:
+      group-id: ${KAFKA_CONSUMER_GROUP:ps-activity-consumer}
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      auto-offset-reset: earliest
+      enable-auto-commit: false   # Manual offset commit — we control exactly when we ack
+      properties:
+        spring.json.trusted.packages: "com.pulsestream.*"
+    streams:
+      application-id: ${KAFKA_STREAMS_APP_ID:ps-streams-processor}
+      bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+      properties:
+        default.key.serde: org.apache.kafka.common.serialization.Serdes$StringSerde
+        default.value.serde: org.springframework.kafka.support.serializer.JsonSerde
+
+  # ─── Redis ────────────────────────────────────────────────────
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}      # Empty = no password (dev only)
+      timeout: 2000ms                   # Connection timeout — Redis calls must not block too long
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 4
+          min-idle: 1
+
+# ─── Actuator / Observability ─────────────────────────────────
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,env,loggers
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: always        # Expose component-level health (DB, Kafka, Redis, ES)
+      show-components: always
+  info:
+    env:
+      enabled: true
+    build:
+      enabled: true
+  health:
+    redis:
+      enabled: true
+    elasticsearch:
+      enabled: true
+
+# ─── Application Info (shown at /actuator/info) ──────────────
+info:
+  app:
+    name: PulseStream
+    description: Real-Time User Activity and Analytics Platform
+    version: 0.1.0
+
+# ─── SpringDoc / Swagger UI ───────────────────────────────────
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operationsSorter: method
+
+# ─── Logging ──────────────────────────────────────────────────
+logging:
+  level:
+    root: INFO
+    com.pulsestream: DEBUG
+    org.springframework.kafka: INFO
+    org.hibernate.SQL: WARN
+  pattern:
+    # Structured log pattern — includes MDC request-id for correlation
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] [%X{requestId}] %-5level %logger{36} - %msg%n"
+
+# ─── PulseStream Custom Properties ────────────────────────────
+pulsestream:
+  kafka:
+    topics:
+      activity-events: ${KAFKA_TOPIC_ACTIVITY_EVENTS:user.activity.events}
+      processed-events: ${KAFKA_TOPIC_PROCESSED_EVENTS:user.activity.processed}
+      dlq: ${KAFKA_TOPIC_DLQ:user.activity.dlq}
+    publish-timeout-ms: ${KAFKA_PUBLISH_TIMEOUT_MS:5000}
+  session:
+    timeout-minutes: ${SESSION_TIMEOUT_MINUTES:30}  # Configurable session inactivity window
+  elasticsearch:
+    host: ${ELASTICSEARCH_HOST:localhost}
+    port: ${ELASTICSEARCH_PORT:9200}
+    scheme: ${ELASTICSEARCH_SCHEME:http}
+    index:
+      activity-events: activity-events
+      user-sessions: user-sessions

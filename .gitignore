@@ -1,0 +1,56 @@
+# ─── Compiled output ──────────────────────────────────────────────────────────
+target/
+*.class
+*.jar
+*.war
+*.ear
+
+# ─── Maven wrapper ────────────────────────────────────────────────────────────
+# Wrapper jar is intentionally excluded — downloaded on demand
+.mvn/wrapper/maven-wrapper.jar
+!.mvn/wrapper/maven-wrapper.properties
+
+# ─── Environment / Secrets ────────────────────────────────────────────────────
+# NEVER commit .env — it contains real credentials
+.env
+*.env
+!.env.example
+
+# ─── IDE files ────────────────────────────────────────────────────────────────
+.idea/
+*.iml
+.vscode/
+*.code-workspace
+.settings/
+.classpath
+.project
+.factorypath
+.springBeans
+*.swp
+*.swo
+
+# ─── OS files ─────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
+spring.log
+
+# ─── Kafka Streams state stores (local RocksDB) ───────────────────────────────
+# Generated at runtime — not source artifacts
+/kafka-streams/
+
+# ─── Docker ───────────────────────────────────────────────────────────────────
+# Do not ignore docker-compose.yml — it is a source artifact
+# Ignore any local override files
+docker-compose.override.yml
+
+# ─── Test output ──────────────────────────────────────────────────────────────
+surefire-reports/
+failsafe-reports/
+
+# ─── Build artifacts ──────────────────────────────────────────────────────────
+HELP.md
